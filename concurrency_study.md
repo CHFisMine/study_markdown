@@ -924,10 +924,6 @@ private static void test1() {
 * 吃饭时要用两根筷子，桌子上共有5根筷子，每位哲学家左右手变各有一根筷子
 * 如果筷子被身边的人拿着，自己就等待
 
-![image-20210203214016206](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210203214016206.png)
-
-
-
 ![image-20210219123117494](并发编程.assets/image-20210219123117494.png)
 
 #### 活锁
