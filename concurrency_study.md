@@ -923,8 +923,9 @@ private static void test1() {
 * 他们只做两件事，思考和吃饭，思考一会吃口饭，吃完饭后接着思考
 * 吃饭时要用两根筷子，桌子上共有5根筷子，每位哲学家左右手变各有一根筷子
 * 如果筷子被身边的人拿着，自己就等待
+* ![哲学家就餐问题](./concurrency_study.assets/image-20210219123117494.png)
 
-![image-20210219123117494](并发编程.assets/image-20210219123117494.png)
+![](D:\github\study_markdown\concurrency_study.assets\image-20210219123117494.png)
 
 #### 活锁
 
