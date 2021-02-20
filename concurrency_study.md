@@ -923,7 +923,6 @@ private static void test1() {
 * 他们只做两件事，思考和吃饭，思考一会吃口饭，吃完饭后接着思考
 * 吃饭时要用两根筷子，桌子上共有5根筷子，每位哲学家左右手变各有一根筷子
 * 如果筷子被身边的人拿着，自己就等待
-* ![哲学家就餐问题](./concurrency_study.assets/image-20210219123117494.png)
 
 ![](D:\github\study_markdown\concurrency_study.assets\image-20210219123117494.png)
 
@@ -1529,37 +1528,199 @@ new Thread(()->{
 
 ```java
 volatile static int x;
+new Thread(()->{
+    x = 10;
+},"t1").start();
+
+new Thread(()->{
+    System.out.println(x);
+},"t2").start();
 ```
 
-![image-20210207163855811](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207163855811.png)
+* 线程start前对变量的写，对该线程开始后对该变量的读可见
 
-![image-20210207164619547](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207164619547.png)
+```java
+static int x;
 
-![image-20210207164647947](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207164647947.png)
+x = 10;
 
-![image-20210207164739471](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207164739471.png)
+new Thread(()->{
+    System.out.println(x);
+},"t1").start();
+```
 
-![image-20210207164814158](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207164814158.png)
+* 线程结束前对变量的写，对其他线程得知它结束后的读可见（比如其他线程调用 t1.isAlive() 或 t1.join()等待它结束）
 
-![image-20210207165128012](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207165128012.png)
+  ```java
+  static int x;
+  
+  Thread t1 = new Thread(()->{
+     x = 10;
+  },"t1");
+  t1.start();
+  
+  t1.join();
+  System.out.println(x);
+  ```
 
-![image-20210207213237952](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207213237952.png)
+* 线程t1打断 t2 (interrupt) 前对变量的写，对于其他线程得知t2被打断后对变量的读可见（通过t2.interrrupted 或 t2.isInterrupted）
 
-![image-20210207215039445](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207215039445.png)
+```java
+static int x;
 
-![image-20210207220123416](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207220123416.png)
+public static void main(String[] args) {
+    Thread t2 = new Thread(() ->{
+        while(true) {
+            if(Thread.currentThread().isInterrupted()) {
+                System.out.println(x);
+                break;
+            }
+        }
+    },"t2");
+    t2.start();
+    
+    new Thread(() -> {
+        sleep(1);
+        x = 10;
+        t2.interrupt();
+    },"t1").start();
+    
+    while(!t2.isInterrupted) {
+        Thread.yeild();
+    }
+    System.out.println(x);
+}
+```
 
-![image-20210207221048863](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210207221048863.png)
+* 对变量默认值（0，false,null）的写，对其他线程对该变量的读可见
+* 具有传递性，如果 x hb -> y 并且 y hb -> z 那么有 x hb-> z, 配合volatile的防指令重排，有下面的例子
 
+```java
+volatile static int x;
+static int y;
 
+new Thread(()->{
+    y = 10;
+    x = 20;
+},"t1").start();
 
+new Thread(()->{
+    // x = 20 对 t2 可见，同时 y = 10 也对 t2可见
+    System.out.println(x);
+},"t2").start();
+```
 
+**习题**
+
+**balking 模式习题**
+
+希望doInit()方法仅被调用一次，下面的实现是否有问题，为什么？
+
+```java
+public class TestVolatile {
+	volatile boolean initialized = false;
+    
+    void init() {
+        if (initialized) { // t1
+            return;
+        }
+         doInit();
+        initialized = true;
+    }
+    
+    public void doInit(){
+        
+    }
+}
+```
+
+**线程安全单例习题**
+
+单例模式有很多实现方法，饿汉、懒汉、静态内部类、枚举类、试分析每种实现下获取单例对象（即调用getInstance）时的线程安全。并思考注释中的问题
+
+饿汉式：类加载就会导致该单实例对象被创建
+
+懒汉式： 类加载不会导致该单例对象被创建，而是首次使用该对象时才会创建
+
+**实现1：**
+
+```java
+// 问题1：为什么加final 答：加final后无法继承，可以防止子类对父类的属性和方法的修改
+// 问题2：如果实现了序列话接口，还需要做点什么来防止反序列化破坏单例
+public final class Singleton implements Serializable {
+    // 问题3：为什么设置为私有？是否能防止反射创建新的实例？
+    private Singleton(){}
+    // 问题4：这样初始化是否能保证单例对象创建时的线程安全？
+    private static final Singleton INSTANCE = new Singleton();
+    // 问题5：为什么提供静态方法，而不是将INSTANCE设置为public?
+    public static Singleton getInstance() {
+        return INSTANCE;
+    }
+}
+```
+
+**实现2：**
+
+```java
+// 问题1 枚举单例是如何限制实例个数的
+// 问题2 枚举单例在创建时是否有并发问题
+// 问题3 枚举单例能否被反射破坏单例
+// 问题4 枚举单例能否被反序列话破坏单例
+// 问题5 枚举单例属于懒汉式还是饿汉式
+// 问题6 枚举单例如果希望加入一些单例创建时的初始化逻辑该如何做
+enum singleton {
+    INSTANCE;
+}
+```
+
+**实现3：**
+
+```java
+public final class Singleton {
+    private Singleton() {}
+    private static Singleton INSTANCE = null;
+    
+    public static synchronized Singleton getInstance() {
+        if(INSTANCE != null) {
+            return INSTANCE;
+        }
+        INSTANCE = new Singleton();
+        return INSTANCE;
+    }
+}
+```
+
+**实现4：**
+
+```java
+public final class Singleton {
+    private Singleton() {}
+    // 问题1: 解释为什么要加 volatile ?
+    private static volatile Singleton INSTANCE = null;
+    
+    // 问题2: 对比实现3，说出这样做的意义
+    public static Singleton getInstance() {
+        if(INSTANCE != null) {
+            return INSTANCE;
+        }
+        synchronized(Singleton.class) {
+            if(INSTANCE != null) {
+               return INSTANCE; 
+            }
+        }
+        INSTANCE = new SInglrton();
+        return INSTANCE;
+    }
+}
+```
 
 
 
 
 
 ## 6.共享模型之无锁
+
+
 
 ## 7.共享模型之不可变
 
