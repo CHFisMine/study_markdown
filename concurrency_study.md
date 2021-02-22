@@ -1714,11 +1714,191 @@ public final class Singleton {
 }
 ```
 
+## 6.共享模型之无锁(乐观锁)
+
+### 本章内容
+
+* CAS 与 volatile
+* 原子整数
+* 原子引用
+* 原子累加器
+* Unsafe
+
+### 6.1 问题提出
+
+#### 为什么不安全
+
+#### 解决思路-锁
+
+#### 解决思路-无锁
+
+```java
+public class testAccount {
+
+    public static void main(String[] args) {
+        Account account = new  AccountUnsafe(10000);
+        Account.demo(account);
+
+        Account account1 = new AccountCas(10000);
+        Account.demo(account1);
+    }
+}
+
+class AccountCas implements Account {
+
+    private AtomicInteger balance;
+
+    public AccountCas(int balance) {
+        this.balance = new AtomicInteger(balance);
+    }
+
+    @Override
+    public Integer getBalance() {
+        return balance.get();
+    }
+
+    @Override
+    public void withdraw(Integer amount) {
+        while(true) {
+            // 获取余额的最新值
+            int pre = balance.get();
+            // 要修改的余额
+            int next = pre - amount;
+            // 真正修改
+            boolean b = balance.compareAndSet(pre, next);
+            if (b) {
+                break;
+            }
+        }
+    }
+}
+
+class AccountUnsafe implements Account {
+
+    private Integer balance;
+
+    public AccountUnsafe(Integer balance) {
+        this.balance = balance;
+    }
+
+    @Override
+    public Integer getBalance() {
+        synchronized (this) {
+            return this.balance;
+        }
+    }
+
+    @Override
+    public void withdraw(Integer amount) {
+        synchronized (this) {
+            this.balance -= amount;
+        }
+    }
+}
+
+interface Account {
+
+    //获取余额
+    Integer getBalance();
+
+    //取款
+    void withdraw(Integer amount);
+
+
+    /**
+     * 方法内会启动1000个线程，每个线程做-10元的操作
+     * 如果初始余额为10000 那么正确的结果应该是0
+     * @param account
+     */
+    static void demo(Account account) {
+        List<Thread> ts = new ArrayList<>();
+        for (int i =0; i<1000;i++) {
+            ts.add(new Thread(()->{
+                account.withdraw(10);
+            }));
+        }
+
+        long start = System.nanoTime();
+        ts.forEach(Thread::start);
+        ts.forEach(t->{
+            try{
+                t.join();
+            }catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        });
+        long end = System.nanoTime();
+        System.out.println(account.getBalance()+" cost: "+ (end-start)/1000_000+" ms");
+    }
+
+
+}
+
+```
+
+### 6.2 CAS 与 volatile
+
+![image-20210220144124112](concurrency_study.assets/image-20210220144124112.png)
+
+![image-20210220144702989](concurrency_study.assets/image-20210220144702989.png)
+
+![image-20210220145852562](concurrency_study.assets/image-20210220145852562.png)
+
+![image-20210220150247592](concurrency_study.assets/image-20210220150247592.png)
+
+![image-20210220150416799](concurrency_study.assets/image-20210220150416799.png)
+
+![image-20210220151018172](concurrency_study.assets/image-20210220151018172.png)
+
+![image-20210221205234693](concurrency_study.assets/image-20210221205234693.png)
+
+![image-20210221210353985](concurrency_study.assets/image-20210221210353985.png)
+
+![image-20210221215853497](concurrency_study.assets/image-20210221215853497.png)
+
+![image-20210221223909152](concurrency_study.assets/image-20210221223909152.png)
 
 
 
 
-## 6.共享模型之无锁
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
