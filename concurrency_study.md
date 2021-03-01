@@ -1,3 +1,5 @@
+
+
 # 并发编程
 
 ## 1. 概览
@@ -41,7 +43,7 @@
 
 
 
-## 3.5 start方法详解
+### 3.5 start方法详解
 
 调用run
 
@@ -1838,51 +1840,309 @@ interface Account {
 
 ### 6.2 CAS 与 volatile
 
-![image-20210220144124112](concurrency_study.assets/image-20210220144124112.png)
+前面看到得AtomicInteger得解决方法，内部并没有使用锁来保护共享变量得线程安全。
 
-![image-20210220144702989](concurrency_study.assets/image-20210220144702989.png)
+```java
+public void withdraw(Integer amount) {
+    while(true) {
+        int prev = balance.get();
+        int next = prev - amount;
+        if(balance.compareAndSet(prev,next)) {
+            break;
+        }
+    }
+}
+```
 
-![image-20210220145852562](concurrency_study.assets/image-20210220145852562.png)
+其中关键得就是CompareAndSet ,它的简称就是CAS（也有Compare And Swap 的说法），它必须是原子操作。
 
-![image-20210220150247592](concurrency_study.assets/image-20210220150247592.png)
+> **注意**
+>
+> CAS的底层是lock cmpxchg 指令(X86架构)，在单核CPU和多核CPU下都能够保证【比较-交换】的原子性。
+>
+> * 在多核状态下，某个核执行到带lock的指令时，CPU会让总线锁住，当这个核把此指令执行完毕，再开启总线。这个过程中不会被线程的调度机制所打断，保证了多个线程对内存操作的准确性，是原子的。
 
-![image-20210220150416799](concurrency_study.assets/image-20210220150416799.png)
+#### **volatile**
 
-![image-20210220151018172](concurrency_study.assets/image-20210220151018172.png)
+获取共享变量时，为了保证该变量的可见性，需要使用volatile修饰
 
-![image-20210221205234693](concurrency_study.assets/image-20210221205234693.png)
+它可以用来修饰成员变量和静态成员变量，他可以避免线程从自己的工作缓存中查找变量的值，必须到主存中获取它的值，线程操作volatile变量都是直接操作主存。即一个线程对volatile变量的修改，对另一个线程可见。
 
-![image-20210221210353985](concurrency_study.assets/image-20210221210353985.png)
+> 注意
+>
+> volatile仅仅保证了共享变量的可见性，让其他线程能够看到最新值，但不能解决指令交错的问题（不能保证原子性）
+
+CAS必须借助volatile才能读取到共享变量的最新值来实现【比较并交换】的效果
+
+#### **为什么无锁效率高**
+
+* 无锁情况下，即使重试失败，线程始终在高速运行，没有停歇，而synchronized会让线程在没有获得锁的时候，发生上下文切换，进入阻塞。打个比喻
+* 线程就好像高速跑到上的赛车，高速运行时，速度超快，一旦发生上下文切换，就好比赛车要减速、熄火，等待被唤醒又得重新打火，启动，加速。。。恢复到高速运行，代价比较大
+* 但无锁情况下，因为线程要保持运行，需要额外CPU支持，CPU在这里就好比高速跑道，没有额外的跑到，线程想高速运行也无法谈起，虽然不会进入阻塞，但由于没有分到时间片，仍然会进入可运行状态，还是会导致上下文切换。
+
+#### **CAS的特点**
+
+结合CAS和volatile可以实现无锁并发，适用于线程数少、多核CPU的场景下。
+
+* CAS是基于乐观锁的思想：最乐观的估计，不怕别的线程来修改共享变量，就算改了也没关系，我吃亏点再重试呗。
+* synchronized是基于悲观锁的思想：最悲观的估计，得防着其他线程来修改共享变量，我上了锁你们都别想改，我改完了解开锁，你们才有机会。
+* CAS体现得是无锁并发、无阻塞并发，仔细体会这两句话得意思
+  * 因为没有使用synchronized，所以线程不会陷入阻塞，这时效率提升得因素之一
+  * 但如果竞争激烈，可以想到重试必然频繁发生，反而效率会受影响
+
+6.3原子整数
+
+J.U.C并发包提供了
+
+* AtomicBoolean
+* AtomicInteger
+* AtomicLong
+
+以AtomicInteger为例
+
+```java
+AtomicInteger i = new AtomicInteger(0);
+
+// 获取并自增(i = 0,结果 i = 1，返回 0)类似于 i++
+System.out.println(i.getAndIncrement());
+
+  AtomicInteger i = new AtomicInteger(0);
+		// 自增并获取（i = 0，结果 i = 1，返回 1）类似于i++
+        System.out.println(i.getAndIncrement());
+        
+        // 自增并获取（i = 1，结果 i = 2，返回 2）类似于++i
+        System.out.println(i.incrementAndGet());
+        
+        // 自减并获取（i = 2，结果 i = 1，返回 1），类似于 --i
+        System.out.println(i.decrementAndGet());
+        
+        // 获取并自减（i = 1,结果 i = 0，返回 1）,类似于 i--
+        System.out.println(i.getAndDecrement());
+        
+        // 获取并加值
+        System.out.println(i.getAndAdd(5));
+        
+        // 加值并获取
+        System.out.println(i.addAndGet(5));
+```
+
+6.4 原子引用
+
+为什么需要原子引用？
+
+* AtomicReference
+* AtomicMarkableReference
+* AtomicStampReference
+
+有如下方法
+
+```java
+public class testAccount {
+
+    public static void main(String[] args) {
+        Account account = new  AccountUnsafe(10000);
+        Account.demo(account);
+
+        Account account1 = new AccountCas(10000);
+        Account.demo(account1);
+    }
+}
+
+class AccountCas implements Account {
+
+    private AtomicInteger balance;
+
+    public AccountCas(int balance) {
+        this.balance = new AtomicInteger(balance);
+    }
+
+    @Override
+    public Integer getBalance() {
+        return balance.get();
+    }
+
+    @Override
+    public void withdraw(Integer amount) {
+        while(true) {
+            // 获取余额的最新值
+            int pre = balance.get();
+            // 要修改的余额
+            int next = pre - amount;
+            // 真正修改
+            boolean b = balance.compareAndSet(pre, next);
+            if (b) {
+                break;
+            }
+        }
+    }
+}
+
+class AccountUnsafe implements Account {
+
+    private Integer balance;
+
+    public AccountUnsafe(Integer balance) {
+        this.balance = balance;
+    }
+
+    @Override
+    public Integer getBalance() {
+        synchronized (this) {
+            return this.balance;
+        }
+    }
+
+    @Override
+    public void withdraw(Integer amount) {
+        synchronized (this) {
+            this.balance -= amount;
+        }
+    }
+}
+
+interface Account {
+
+    //获取余额
+    Integer getBalance();
+
+    //取款
+    void withdraw(Integer amount);
+
+
+    /**
+     * 方法内会启动1000个线程，每个线程做-10元的操作
+     * 如果初始余额为10000 那么正确的结果应该是0
+     * @param account
+     */
+    static void demo(Account account) {
+        List<Thread> ts = new ArrayList<>();
+        for (int i =0; i<1;i++) {
+            ts.add(new Thread(()->{
+                account.withdraw(10);
+            }));
+        }
+
+        long start = System.nanoTime();
+        ts.forEach(Thread::start);
+        ts.forEach(t->{
+            try{
+                t.join();
+            }catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        });
+        long end = System.nanoTime();
+        System.out.println(account.getBalance()+" cost: "+ (end-start)/1000_000+" ms");
+    }
+}
+
+```
+
+### 不安全实现
+
+### 安全实现-使用锁
+
+### 安全实现-使用CAS
+
+### ABA问题及解决
+
+#### ABA问题
+
+#### AtomicStampReference
+
+主线程仅能判断出共享变量得值与最初A是否相同，不能感知到这种从A改为B又改为A得情况，如果主线程希望：
+
+只要有其他线程[改动了]共享变量，那么自己得cas就算失效，这时，仅比较值是不够得，需要再加一个版本号
+
+```java
+    static AtomicStampedReference<String> ref = new AtomicStampedReference<>("A",0);
+    public static void main(String[] args) throws InterruptedException {
+        log.debug("main start....");
+        // 获取值A
+        // 这个共享变量被其他线程修改过？
+        String prev = ref.getReference();
+        // 获取版本号
+        int stamp = ref.getStamp();
+        log.debug("{}",stamp);
+        other();
+        sleep(1000);
+        //尝试改为C
+        log.debug("change A->C {}",ref.compareAndSet(prev,"C",stamp,stamp+1));
+    }
+    private static void other() throws InterruptedException {
+        new Thread(()->{
+            int stamp = ref.getStamp();
+            log.debug("{}",stamp);
+            log.debug("change A->B {}",ref.compareAndSet(ref.getReference(),"B",stamp,stamp+1));
+        },"t1").start();
+        sleep(500);
+        new Thread(()->{
+            int stamp = ref.getStamp();
+            log.debug("{}",stamp);
+            log.debug("change B->A {}",ref.compareAndSet(ref.getReference(),"A",stamp,stamp+1));
+        },"t2").start();
+    }
+```
+
+#### AtomicMarkableReference 可以给原子引用加上版本号，追踪原子引用整个的比那花过程，如：
+
+A -> B ->A -> C ，通过AtomicStampedReference，我们可以知道， 引用变量中途被更改了几次。
+
+但是有时候，并不关系引用变量更改了几次，只是单纯关心**是否被更改过**，所以就有了AtomicMarkableReference
+
+AtomicMarkableReference
+
+```java
+
+```
+
+![image-20210222155009099](concurrency_study.assets/image-20210222155009099.png)
+
+
 
 ![image-20210221215853497](concurrency_study.assets/image-20210221215853497.png)
 
+
+
+
+
+6.5 原子数组
+
+* AtomicIntegerArray
+* AtomicLongArray
+* AtomicReferenceArray
+
+6.6 字段更新器
+
+* Atomic
+
 ![image-20210221223909152](concurrency_study.assets/image-20210221223909152.png)
 
+![image-20210222205231411](concurrency_study.assets/image-20210222205231411.png)
+
+![image-20210222221804800](concurrency_study.assets/image-20210222221804800.png)
 
 
 
+![image-20210223125033161](concurrency_study.assets/image-20210223125033161.png)
+
+![image-20210223141904773](concurrency_study.assets/image-20210223141904773.png)
 
 
 
+![image-20210223144654784](concurrency_study.assets/image-20210223144654784.png)
 
 
 
+![image-20210223144724165](concurrency_study.assets/image-20210223144724165.png)
 
+![image-20210223145128776](concurrency_study.assets/image-20210223145128776.png)
 
+![image-20210223150113727](concurrency_study.assets/image-20210223150113727.png)
 
+![image-20210223151306649](concurrency_study.assets/image-20210223151306649.png)
 
-
-
-
-
-
-
-
-
-
-
-
-
+![image-20210223151441080](concurrency_study.assets/image-20210223151441080.png)
 
 
 
@@ -1903,4 +2163,117 @@ interface Account {
 
 
 ## 7.共享模型之不可变
+
+### 本章内容
+
+* 不可变类的使用
+* 不可变类设计
+* 无状态类设计
+
+### 7.1 日期转换的问题
+
+问题提出
+
+下面的代码在运行时，由于 SimpleDateFormate不是线程安全的
+
+```java
+ SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        for (int i = 0; i < 10; i++) {
+            new Thread(()->{
+                try{
+                    log.debug("{}",sdf.parse("1951-04-21"));
+                }catch (Exception e) {
+                    log.error("{}",e);
+                }
+            }).start();
+        }
+```
+
+### 7.2 不可变设计
+
+另一个更为熟悉的spring类也是不可变的，以它为例，说明一下不可变设计的要素
+
+```java
+public final class String
+    implements java.io.Serializable, Comparable<String>, CharSequence {
+    /** The value is used for character storage. */
+    private final char value[];
+
+    /** Cache the hash code for the string */
+    private int hash; // Default to 0
+    
+    // ...
+}
+```
+
+#### **final的使用**
+
+发现该类，类中的属性都是final的
+
+* 属性用final修饰保证了该属性是只读的，不能修改
+* 类用final修饰保证了该类中的方法不能被覆盖，防止子类无意间破坏了不可变性
+
+#### 保护性拷贝
+
+但有同学说，使用字符串时，也有一些跟修改相关的方法啊，比如substring等，那么就看一下这些方法是如何实现的，就以substring为例：
+
+```java
+ public String substring(int beginIndex) {
+        if (beginIndex < 0) {
+            throw new StringIndexOutOfBoundsException(beginIndex);
+        }
+        int subLen = value.length - beginIndex;
+        if (subLen < 0) {
+            throw new StringIndexOutOfBoundsException(subLen);
+        }
+        return (beginIndex == 0) ? this : new String(value, beginIndex, subLen);
+    }
+```
+
+发现其内部是调用String的构造方法创建了一个新字符串，再进入这个构造看看，是否对final char[] value做出了修改：
+
+```java
+public String(char value[], int offset, int count) {
+        if (offset < 0) {
+            throw new StringIndexOutOfBoundsException(offset);
+        }
+        if (count <= 0) {
+            if (count < 0) {
+                throw new StringIndexOutOfBoundsException(count);
+            }
+            if (offset <= value.length) {
+                this.value = "".value;
+                return;
+            }
+        }
+        // Note: offset or count might be near -1>>>1.
+        if (offset > value.length - count) {
+            throw new StringIndexOutOfBoundsException(offset + count);
+        }
+        this.value = Arrays.copyOfRange(value, offset, offset+count);
+    }
+```
+
+结果发现也没有，构造新字符串时会产生新的char [] value,对内容进行复制。这种通过创建副本对象来避免共享的手段称之为【保护性拷贝（defensive copy）】
+
+
+
+7.3 无状态
+
+在web学习阶段时，设计servlet时为了保证其线程安全，都有这样的建议，不要为servlet设计成员变量，这种没有任何成员变量的类是线程安全的。
+
+> 成员变量保存的数据也可以成为状态信息，没有成员变量就称之为【无状态】。
+
+本章小结
+
+不可变类使用
+
+不可变类设计
+
+* *原理方面
+  * final
+* 模式方面
+  * 享元
+
+![image-20210223222834118](concurrency_study.assets/image-20210223222834118.png)
 
