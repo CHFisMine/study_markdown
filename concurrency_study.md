@@ -2106,17 +2106,25 @@ AtomicMarkableReference
 
 
 
-6.5 原子数组
+### 6.5 原子数组
 
 * AtomicIntegerArray
 * AtomicLongArray
 * AtomicReferenceArray
 
-6.6 字段更新器
+### 6.6 字段更新器
 
-* Atomic
+* AtomicReferenceFieldUpdater // 域 字段
+* AtomicIntegerFieldUpdater
+* AtomicLongFieldUpdater 
 
-![image-20210221223909152](concurrency_study.assets/image-20210221223909152.png)
+利用字段更新器，可以针对对象的某个域进行原子操作，只能配合volatile修饰的字段使用，否则会出现异常
+
+6.7 原子累加器
+
+累加器性能比较
+
+
 
 ![image-20210222205231411](concurrency_study.assets/image-20210222205231411.png)
 
@@ -2158,7 +2166,7 @@ AtomicMarkableReference
 
 
 
-
+下
 
 
 
@@ -2167,7 +2175,7 @@ AtomicMarkableReference
 ### 本章内容
 
 * 不可变类的使用
-* 不可变类设计
+* 是撒啊啊啊啊啊啊啊啊啊啊啊啊啊啊a'z不可变类设计
 * 无状态类设计
 
 ### 7.1 日期转换的问题
@@ -2277,3 +2285,6 @@ public String(char value[], int offset, int count) {
 
 ![image-20210223222834118](concurrency_study.assets/image-20210223222834118.png)
 
+![image-20210301202504077](concurrency_study.assets/image-20210301202504077.png)
+
+![image-20210301215039823](concurrency_study.assets/image-20210301215039823.png)
