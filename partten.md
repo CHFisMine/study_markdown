@@ -37,3 +37,9 @@
 ![image-20210224230437711](C:\Users\season\AppData\Roaming\Typora\typora-user-images\image-20210224230437711.png)
 
 ![image-20210301202529860](partten.assets/image-20210301202529860.png)
+
+![image-20210304125740632](partten.assets/image-20210304125740632.png)
+
+![image-20210304130503773](partten.assets/image-20210304130503773.png)
+
+![image-20210304210424331](partten.assets/image-20210304210424331.png)

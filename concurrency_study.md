@@ -2288,3 +2288,426 @@ public String(char value[], int offset, int count) {
 ![image-20210301202504077](concurrency_study.assets/image-20210301202504077.png)
 
 ![image-20210301215039823](concurrency_study.assets/image-20210301215039823.png)
+
+
+
+
+
+## 8.共享模型之工具
+
+### 8 .1线程池分析
+
+#### 1.自定义线程池
+
+```java
+public class TestPool {
+
+    private static Logger log = LoggerFactory.getLogger(TestPool.class);
+
+    public static void main(String[] args) {
+        ThreadPool threadPool = new ThreadPool(1, 1000, TimeUnit.MILLISECONDS, 1,((queue, task) -> {
+            // 1)死等
+            // queue.put(task);
+            // 2)带超时等待
+//            queue.offer(task,500,TimeUnit.MILLISECONDS);
+            // 3)放弃
+//            log.debug("放弃任务...");
+            // 4)让调用者抛出异常
+//            throw new RuntimeException("任务执行失败"+task);
+            // 5)让调用者自己执行任务
+            task.run();
+        }));
+
+        for (int i = 0; i < 3; i++) {
+            int j = i;
+            threadPool.execute(()->{
+                try {
+                    Thread.sleep(1000L);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                log.debug("{}",j);
+            });
+        }
+    }
+}
+
+@FunctionalInterface //拒绝策略
+interface RejectPolicy<T> {
+    void reject(BlockingQueue<T> queue, T task);
+}
+
+class ThreadPool {
+
+    private static Logger log = LoggerFactory.getLogger(ThreadPool.class);
+
+    // 任务队列
+    private BlockingQueue<Runnable> taskQueue;
+
+    // 线程集合(共享资源，size add 保证线程安全性)
+    private HashSet<Worker> workers = new HashSet<>();
+
+    // 核心线程数
+    private int coreSize;
+
+    // 获取任务的超时时间
+    private long timeout;
+
+    // 时间单位
+    private TimeUnit timeUnit;
+
+    private RejectPolicy<Runnable> rejectPolicy;
+
+    // 执行任务
+    public void execute(Runnable task) {
+        // 当任务数没有超过coreSize时，直接交给worker对象执行
+        // 如果任务数超过coreSize时，加入任务队列暂存
+        synchronized (workers) {
+            if (workers.size() < coreSize) {
+                Worker worker = new Worker(task);
+                log.debug("新增 worker{},{}" ,worker,task);
+                workers.add(worker);
+                worker.start();
+            } else {
+//                taskQueue.put(task);
+                // 1) 死等
+                // 2）带超时等待
+                // 3）让调用者放弃任务执行
+                // 4）让调用者抛出异常
+                // 5）让调用者自己执行任务
+                taskQueue.tryPut(rejectPolicy, task);
+            }
+        }
+    }
+
+
+    public ThreadPool(int coreSize, long timeout, TimeUnit timeUnit, int queueCapacity, RejectPolicy<Runnable> rejectPolicy) {
+        this.coreSize = coreSize;
+        this.timeout = timeout;
+        this.timeUnit = timeUnit;
+        this.taskQueue = new BlockingQueue<>(queueCapacity);
+        this.rejectPolicy = rejectPolicy;
+    }
+
+    class Worker extends Thread{
+
+        private Runnable task;
+
+        public Worker(Runnable task) {
+            this.task = task;
+        }
+
+        @Override
+        public void run() {
+            // 执行任务
+            // 1）当task不为空执行任务
+            // 2）当task执行完毕，再接着从任务队列获取任务并执行
+            while(task != null || (task = taskQueue.poll(1000,TimeUnit.MILLISECONDS)) != null) {
+                try {
+                    log.debug("正在执行.....{}",task);
+                    task.run();
+                } catch (Exception e) {
+                    log.debug(e.toString());
+                } finally {
+                    task = null;
+                }
+            }
+            synchronized (workers) {
+                log.debug("wroker 被移除{}",this);
+                workers.remove(task);
+            }
+        }
+    }
+}
+
+
+
+
+class BlockingQueue<T> {
+
+    private static Logger log = LoggerFactory.getLogger(BlockingQueue.class);
+
+    // 1.任务队列
+    private Deque<T> queue = new ArrayDeque<>();
+
+    // 2.锁
+    private ReentrantLock lock = new ReentrantLock();
+
+    // 3.生产者条件变量
+    private Condition fullWaitSet = lock.newCondition();
+
+    // 4.消费者条件变量
+    private Condition emptyWaitSet = lock.newCondition();
+
+    // 5.容量
+    private int capacity;
+
+    public BlockingQueue(int capacity) {
+        this.capacity = capacity;
+    }
+
+    // 带超时的阻塞获取
+    public T poll(long timeout, TimeUnit unit) {
+        lock.lock();
+        try {
+            // 将timeout 统一转换为 纳秒
+            long nanos = unit.toNanos(timeout);
+            while (queue.isEmpty()) {
+                try {
+                    if(nanos <= 0) {
+                        return null;
+                    }
+                    // 返回的是剩余时间
+                    nanos = emptyWaitSet.awaitNanos(nanos);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            // 获取队列中的第一个元素就是 移除队列中的第一个元素
+            T t = queue.removeFirst();
+            // 队列有空位了 唤醒生产者队列
+            fullWaitSet.signal();
+            return t ;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    // 阻塞获取
+    public T take() {
+        lock.lock();
+        try {
+            while (queue.isEmpty()) {
+                try {
+                    emptyWaitSet.await();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            // 获取队列中的第一个元素就是 移除队列中的第一个元素
+            T t = queue.removeFirst();
+            // 队列有空位了 唤醒生产者队列
+            fullWaitSet.signal();
+            return t ;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    // 带超时时间的阻塞添加
+    public boolean offer(T task, long timeout, TimeUnit timeUnit) {
+        lock.lock();
+        try {
+            long nanos = timeUnit.toNanos(timeout);
+            while (queue.size() == capacity) {
+                try {
+                    log.debug("等待加入任务队列{}。。。。",task);
+                    if (nanos <= 0) {
+                        return false;
+                    }
+                    nanos = fullWaitSet.awaitNanos(nanos);
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+            }
+            // 队列末尾增加元素
+            queue.addLast(task);
+            log.debug("加入任务队列{}",task);
+            // 通知消费者线程
+            emptyWaitSet.signal();
+        } finally {
+            lock.unlock();
+        }
+        return true;
+    }
+
+    // 阻塞添加
+    public void put(T task) {
+        lock.lock();
+        try {
+           while (queue.size() == capacity) {
+               try {
+                   log.debug("等待加入任务队列{}。。。。",task);
+                   fullWaitSet.await();
+               } catch (InterruptedException e) {
+                   e.printStackTrace();
+               }
+           }
+           // 队列末尾增加元素
+           queue.addLast(task);
+            log.debug("加入任务队列{}",task);
+           // 通知消费者线程
+            emptyWaitSet.signal();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // 获取大小
+    public int size() {
+        lock.lock();
+        try {
+           return queue.size();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+
+    public void tryPut(RejectPolicy<T> rejectPolicy, T task) {
+        lock.lock();
+        try {
+           // 判断队列是否已满
+           if (queue.size() == capacity) {
+               rejectPolicy.reject(this,task);
+           } else {  // 有空闲
+               // 队列末尾增加元素
+               queue.addLast(task);
+               log.debug("加入任务队列{}",task);
+               // 通知消费者线程
+               emptyWaitSet.signal();
+           }
+        } finally {
+            lock.unlock();
+        }
+    }
+}
+```
+
+
+
+#### 2.ThreadPoolExecutor
+
+##### 1)	线程池状态
+
+![image-20210305141947918](concurrency_study.assets/image-20210305141947918.png)
+
+ThreadPoolExecutor 使用int的高3位来表示线程池的状态，低29位表示线程数量
+
+| 状态名     | 高三位 | 接收新任务 | 处理阻塞任务队列 | 说明                                     |
+| ---------- | ------ | ---------- | ---------------- | ---------------------------------------- |
+| RUNNING    | 111    | Y          | Y                | 接收新任务，处理阻塞队列得任务           |
+| SHUTDOWN   | 000    | N          | Y                | 不会接收新任务，但会处理阻塞队列剩余任务 |
+| STOP       | 001    | N          | N                | 会中断正在执行的任务，并抛弃阻塞队列任务 |
+| TIDYING    | 010    | -          | -                | 任务全执行完毕，活动线程为0即将进入终结  |
+| TERMINATED | 011    | -          | -                | 终结状态                                 |
+
+从数字上比较，TERMINATED > TIDYING > STOP > SHUTDOWN > RUNNING
+
+这些信息存储在一个ctl中，目的是将线程池的状态与线程个数合二为一，这样就可以使用一次cas原子操作进行赋值
+
+
+
+##### 2)	构造方法
+
+```java
+ public ThreadPoolExecutor(int corePoolSize,
+                              int maximumPoolSize,
+                              long keepAliveTime,
+                              TimeUnit unit,
+                              BlockingQueue<Runnable> workQueue,
+                              ThreadFactory threadFactory,
+                              RejectedExecutionHandler handler)
+```
+
+* corePoolSize 核心线程数目（最多保留的线程数）
+* maximumPoolSize 最大线程数目
+* keepAliveTime 生存时间-针对救急线程
+* unit 时间单位-针对救急线程
+* workQueue 阻塞队列
+* threadFactory 线程工厂-可以为线程创建时起个好名字
+* handler 拒绝策略
+
+工作方式：
+
+* 当线程池中刚开始还没有线程，当一个任务提交给线程池后，线程池会创建一个新线程来执行任务。
+* 当线程数达到corePoolSize并没有线程空闲，这时再加入任务，新加的任务会被加入workQueue队列排队，直到有空闲的线程。
+* 如果队列选择了有界队列，那么任务超过了队列大小时，会创建一个maximumPoolSize-corePoolSize数目的线程来救急
+* 如果线程达到maximumPoolSize任然有新任务这时会执行拒绝策略。拒绝策略JDK提供了4种实现，其他著名框架也提供了实现
+  * AbortPolicy 让调用者抛出RejectedException异常，这是默认策略
+  * CallerRunsPolicy 让调用者运行任务
+  * DiscardPolicy 放弃本次任务
+  * DiscardOldestPolicy 放弃队列种最早的任务，本任务取而代之
+  * Dubbo的实现，在抛出RejectedExecutionException之前会记录日志，并dump线程栈信息，方便定位问题
+  * Netty的实现，创建一个新线程来执行任务
+  * ActiveMQ的实现，带超时等待（60S）尝试放入队列，类似我们之前自定义的拒绝策略
+  * pinPoint的实现，它使用一个拒绝策略链，会逐一尝试策略连中的每种拒绝策略
+* 当高峰过去后，超过corePoolSize的救急线程如果一段时间没有任务做，需要结束节省资源，这个时间由keepAliveTime和unit来控制
+
+##### 3)	newFixedThreadPool
+
+```java
+public static Executors newFixedThreadPool(int nThread) {
+            return new ThreadPoolExecutor(nThread, 
+                    nThread, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingDeque<>())
+        }
+```
+
+特点：
+
+* 核心线程数=最大线程数（没有救急线程被创建），因此也无需超时时间
+
+* 阻塞队列是无界的，可以防任意数量的任务
+
+  > 评价：适用于任务量已知，相对耗时的任务
+
+##### 4)	newCachedThreadPool
+
+```java
+   public static ExecutorService newCachedThreadPool(ThreadFactory threadFactory) {
+        return new ThreadPoolExecutor(0, Integer.MAX_VALUE,
+                                      60L, TimeUnit.SECONDS,
+                                      new SynchronousQueue<Runnable>(),
+                                      threadFactory);
+    }
+```
+
+特点：
+
+* 核心线程数是0，最大线程数是Integer.MAX_VALUE,救急线程的空闲生存时间是60S,意味着
+  * 全部都是救急线程（60S后可以回收）bgb
+  * 救急线程可以无限创建
+* 队列采用了SynchronousQueue实现特点是，它没有容量，没有线程来取是放不进去的（一手交钱，一手交货）
+
+##### 5)	newSingleThreadExecutor
+
+```java
+ public static ExecutorService newSingleThreadExecutor() {
+        return new FinalizableDelegatedExecutorService
+            (new ThreadPoolExecutor(1, 1,
+                                    0L, TimeUnit.MILLISECONDS,
+                                    new LinkedBlockingQueue<Runnable>()));
+    }
+```
+
+适用场景：
+
+希望多个任务排队执行。线程数固定为1，任务数多于1时，会放入无界队列排队。任务执行完毕，这唯一的线程也不会被释放。
+
+区别：
+
+* 自己创建一个单线程串行执行任务，如果任务执行失败而终止那么没有任何补救措施，而线程池还会新建一个线程，保证池的正常工作
+* Executors.newSingleThreadExecutor()线程个数始终为1，不能修改
+  * FinalizableDelegatedExecutorService应用的是装饰器模式，只对外暴露ExecutorService接口，因此不能直接调用ThreadPoolExecutor中特有的方法。
+* Executors.newFixedThreadPool(1)初始时为1，以后还可以修改
+  * 对外暴露的是ThreadPoolExecutor对象，可以强转后调用setPoolSize()进行修改
+
+
+
+
+
+![image-20210303213008856](concurrency_study.assets/image-20210303213008856.png)
+
+![image-20210303221606622](concurrency_study.assets/image-20210303221606622.png)
+
+![image-20210304085511645](concurrency_study.assets/image-20210304085511645.png)
+
+![image-20210304212948828](concurrency_study.assets/image-20210304212948828.png)
+
+![image-20210304221714827](concurrency_study.assets/image-20210304221714827.png)
+
+![image-20210304221955089](concurrency_study.assets/image-20210304221955089.png)
+
+![image-20210304223137881](concurrency_study.assets/image-20210304223137881.png)
